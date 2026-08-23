@@ -1,6 +1,35 @@
-# Test your FastAPI endpoints
+# Test TenderDigest FastAPI endpoints
 
 GET http://127.0.0.1:8000/
 Accept: application/json
 
 ###
+
+# Загрузить PDF для анализа
+POST http://127.0.0.1:8000/api/v1/files
+Content-Type: multipart/form-data; boundary=----tenderboundary
+
+------tenderboundary
+Content-Disposition: form-data; name="file"; filename="tender.pdf"
+Content-Type: application/pdf
+
+< ./tender.pdf
+------tenderboundary--
+
+###
+
+# Список всех файлов со статусами
+GET http://127.0.0.1:8000/api/v1/files
+Accept: application/json
+
+###
+
+# Статус файла и выжимка по id
+GET http://127.0.0.1:8000/api/v1/files/00000000-0000-0000-0000-000000000000
+Accept: application/json
+
+###
+
+# SSE-поток статусов
+GET http://127.0.0.1:8000/api/v1/events
+Accept: text/event-stream
