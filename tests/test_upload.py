@@ -53,3 +53,24 @@ def test_upload_accepts_twice(client, fake_repo, storage_dir, fake_task):
         )
         assert resp.status_code == 201
     assert len(fake_repo.tenders) == 2
+
+
+def test_upload_marks_failed_when_broker_unavailable(
+    client, fake_repo, storage_dir, fake_task
+):
+    """Если задачу не удалось поставить в очередь — файл уходит в failed,
+    а не остаётся навсегда в queued."""
+    fake_task.delay.side_effect = ConnectionError("Redis недоступен")
+
+    resp = client.post(
+        "/api/v1/files",
+        files={
+            "file": ("tender_doc.pdf", b"%PDF-1.4 fake", "application/pdf")
+        },
+    )
+    # API не зависло, ответ отдан
+    assert resp.status_code == 201
+
+    tender = list(fake_repo.tenders.values())[0]
+    assert tender.status == TenderStatus.FAILED
+    assert "Redis" in (tender.error_message or "")

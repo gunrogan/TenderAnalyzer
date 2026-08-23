@@ -1,4 +1,5 @@
 # storage.py
+import os
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -15,14 +16,15 @@ def storage_dir() -> Path:
 
 
 async def save_upload(file: UploadFile, tender_id: str) -> str:
-    """Сохраняет загруженный файл в локальное хранилище и возвращает путь.
+    """Сохраняет загруженный файл в локальное хранилище и возвращает АБСОЛЮТНЫЙ путь.
 
-    Возвращает относительный путь к файлу в папке хранилища.
+    Абсолютный путь критичен: Celery-воркер может работать из другого
+    рабочего каталога, и относительный путь "storage/x.pdf" не разрешится.
     """
     content = await file.read()
     if len(content) > MAX_SIZE_BYTES:
         raise ValueError("Файл слишком большой")
     ext = Path(file.filename or "document.pdf").suffix.lower()
-    relative = f"{tender_id}{ext}"
-    (storage_dir() / relative).write_bytes(content)
-    return relative
+    rel_path = storage_dir() / f"{tender_id}{ext}"
+    rel_path.write_bytes(content)
+    return os.path.abspath(rel_path)

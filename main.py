@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -25,6 +26,7 @@ from storage import save_upload
 from tasks import analyze_tender_file
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # Теги для группировки в Swagger UI
 TAG_FILES = "Файлы"
@@ -152,9 +154,17 @@ async def upload_file(
 
     tender = await repo.create(filename, storage_path)
     try:
-        analyze_tender_file.delay(str(tender.id))
+        # Celery .delay() выполняет синхронные сокет-операции к Redis.
+        # Запускаем в отдельном потоке, чтобы не блокировать event loop API.
+        await asyncio.to_thread(analyze_tender_file.delay, str(tender.id))
     except Exception:
         logger.exception("Не удалось поставить задачу в очередь")
+        await repo.set_status(
+            tender.id,
+            TenderStatus.FAILED,
+            error_message="Не удалось поставить задачу в очередь (брокер недоступен). "
+            "Проверьте запуск Redis/Celery.",
+        )
     return _tender_file_response(tender)
 
 

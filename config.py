@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     redoc_url: str = "/redoc"
     openapi_url: str = "/openapi.json"
 
+    # Celery worker
+    # threads-пул безопасен на Windows (prefork использует spawn и ломает
+    # fast_trace optimization). tasks используют asyncio.run внутри потока.
+    worker_pool: str = "threads"
+    worker_concurrency: int = 4
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

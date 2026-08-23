@@ -21,6 +21,12 @@ async_session_factory = async_sessionmaker(
 )
 
 
+async def dispose_engine() -> None:
+    """Закрыть все соединения пула.
+    """
+    await engine.dispose()
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         yield session
