@@ -8,7 +8,7 @@ from models import Base
 from config import settings
 
 # Важно: импортируем модели, чтобы Alembic увидел их metadata.
-from app.models import Tender, TenderSummary  # noqa: F401
+from models import Tender, TenderSummary  # noqa: F401
 
 
 config = context.config
