@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 180
     llm_max_chars: int = 60_000
 
+    # API и документация (Swagger/ReDoc)
+    api_prefix: str = "/api/v1"
+    swagger_enabled: bool = True
+    docs_url: str = "/docs"
+    redoc_url: str = "/redoc"
+    openapi_url: str = "/openapi.json"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

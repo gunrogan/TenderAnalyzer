@@ -26,6 +26,12 @@ from tasks import analyze_tender_file
 
 logger = logging.getLogger(__name__)
 
+# Теги для группировки в Swagger UI
+TAG_FILES = "Файлы"
+TAG_EVENTS = "События"
+
+API_PREFIX = settings.api_prefix
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,9 +41,34 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="TenderDigest",
-    description="Анализ тендерной документации (PDF) с помощью LLM.",
+    description=(
+        "Сервис автоматического анализа тендерной документации (PDF). "
+        "Принимает файл, асинхронно обрабатывает его через локальную LLM "
+        "(Ollama) и возвращает структурированную выжимку: сумму контракта, "
+        "сроки, требования к исполнителю и штрафы.\n\n"
+        "## Эндпоинты\n"
+        "- `POST /api/v1/files` — загрузить PDF на анализ\n"
+        "- `GET /api/v1/files` — список файлов со статусами\n"
+        "- `GET /api/v1/files/{id}` — файл и, при готовности, выжимку\n"
+        "- `GET /api/v1/events` — SSE-поток смены статусов\n\n"
+        "### Статусы\n"
+        "`queued` → `processing` → `completed` | `failed`"
+    ),
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=settings.docs_url if settings.swagger_enabled else None,
+    redoc_url=settings.redoc_url if settings.swagger_enabled else None,
+    openapi_url=settings.openapi_url if settings.swagger_enabled else None,
+    openapi_tags=[
+        {
+            "name": TAG_FILES,
+            "description": "Загрузка PDF и доступ к файлам и выжимкам.",
+        },
+        {
+            "name": TAG_EVENTS,
+            "description": "Отслеживание изменение статусов в реальном времени.",
+        },
+    ],
 )
 
 app.add_middleware(
@@ -89,10 +120,18 @@ def _detail_response(tender: Tender) -> TenderDetailResponse:
 
 
 @app.post(
-    "/api/v1/files",
+    f"{API_PREFIX}/files",
     response_model=TenderFileResponse,
     status_code=201,
+    tags=[TAG_FILES],
     summary="Загрузить PDF для анализа",
+    description=(
+        "Принимает PDF-файл тендерной документации, сохраняет его в "
+        "хранилище, создаёт запись со статусом `queued` и ставит задачу "
+        "асинхронной обработки в очередь (Celery).\n\n"
+        "- Возвращает `201`, если файл принят;\n"
+        "- `400`, если расширение не `.pdf` или файл превышает лимит."
+    ),
 )
 async def upload_file(
     file: UploadFile = File(..., description="PDF-файл тендерной документации"),
@@ -120,9 +159,15 @@ async def upload_file(
 
 
 @app.get(
-    "/api/v1/files",
+    f"{API_PREFIX}/files",
     response_model=FileListResponse,
+    tags=[TAG_FILES],
     summary="Список файлов со статусами",
+    description=(
+        "Возвращает список всех загруженных файлов с текущими статусами "
+        "обработки (`queued`, `processing`, `completed`, `failed`).\n\n"
+        "Поддерживает пагинацию через `limit` (1–1000) и `offset`."
+    ),
 )
 async def list_files(
     limit: int = 100,
@@ -134,9 +179,19 @@ async def list_files(
 
 
 @app.get(
-    "/api/v1/files/{tender_id}",
+    f"{API_PREFIX}/files/{{tender_id}}",
     response_model=TenderDetailResponse,
+    tags=[TAG_FILES],
     summary="Получить файл и, при готовности, его выжимку",
+    description=(
+        "Возвращает информацию о файле вместе с выжимкой, если обработка "
+        "завершена.\n\n"
+        "- `200` — файл найден, статус `completed`, выжимка доступна;\n"
+        "- `404` — файл не найден;\n"
+        "- `409` — обработка ещё не завершена (`processing` / `queued`) "
+        "или завершилась ошибкой (`failed`). Актуальный статус передаётся "
+        "в заголовке `X-Tender-Status`."
+    ),
 )
 async def get_file(
     tender_id: UUID,
@@ -163,8 +218,18 @@ async def get_file(
 
 
 @app.get(
-    "/api/v1/events",
+    f"{API_PREFIX}/events",
+    tags=[TAG_EVENTS],
     summary="SSE-поток смены статусов файлов",
+    description=(
+        "Server-Sent Events: открывает долгоживущий поток, в котором приходят "
+        "сообщения о смене статуса любого загруженного файла.\n\n"
+        "- Первое событие — `connected`;\n"
+        "- Каждое изменение — событие `status` с полями `file_id`, `status`, "
+        "`error_message`, `ts`;\n"
+        "- Периодически отправляются `ping` для поддержания соединения.\n\n"
+        "Поток удобно использовать для мониторинга очереди обработки."
+    ),
 )
 async def events():
     return StreamingResponse(
