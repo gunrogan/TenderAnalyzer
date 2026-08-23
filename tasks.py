@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import UUID
 
 from celery import Celery
 
 from config import settings
-from db import async_session_factory, dispose_engine
+from db import worker_session_scope
 from events import publish_status
 from llm import extract_text, summarize_document
 from models import TenderStatus
 from repositories import TenderRepository
+
+logger = logging.getLogger(__name__)
 
 celery_app = Celery(
     "tenderdigest",
@@ -52,12 +55,8 @@ def analyze_tender_file(tender_id: str) -> None:
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_process(UUID(tender_id)))
     finally:
-        # Закрыть asyncpg-соединения в этом же loop, чтобы не осталось
-        # "Event loop is closed" в следующей задаче/потоке.
-        try:
-            loop.run_until_complete(dispose_engine())
-        except Exception:
-            pass
+        # Закрыть async-генераторы и event loop. Соединения БД в воркере
+        # управляются самим worker_session_scope (свой NullPool на вызов).
         try:
             loop.run_until_complete(loop.shutdown_asyncgens())
         except Exception:
@@ -67,26 +66,35 @@ def analyze_tender_file(tender_id: str) -> None:
 
 
 async def _process(tender_id: UUID) -> None:
-    async with async_session_factory() as db:
-        repo = TenderRepository(db)
-        tender = await repo.get(tender_id)
-        if tender is None:
-            return
-        await repo.set_status(tender_id, TenderStatus.PROCESSING)
-    await publish_status(tender_id, TenderStatus.PROCESSING.value)
-
     try:
+        async with worker_session_scope() as db:
+            repo = TenderRepository(db)
+            tender = await repo.get(tender_id)
+            if tender is None:
+                return
+            await repo.set_status(tender_id, TenderStatus.PROCESSING)
+        await publish_status(tender_id, TenderStatus.PROCESSING.value)
+
         text = await extract_text(tender.storage_path)
         summary = await summarize_document(text)
-        async with async_session_factory() as db:
+        async with worker_session_scope() as db:
             repo = TenderRepository(db)
             await repo.save_summary(tender_id, summary)
             await repo.set_status(tender_id, TenderStatus.COMPLETED)
         await publish_status(tender_id, TenderStatus.COMPLETED.value)
     except Exception as exc:
-        async with async_session_factory() as db:
+        message = str(exc).strip() or f"{type(exc).__name__}: {exc!r}"
+        logger.error(
+            "Обработка файла %s завершилась ошибкой: %s",
+            tender_id,
+            message,
+            exc_info=True,
+        )
+        async with worker_session_scope() as db:
             repo = TenderRepository(db)
             await repo.set_status(
-                tender_id, TenderStatus.FAILED, error_message=str(exc)
+                tender_id, TenderStatus.FAILED, error_message=message
             )
-        await publish_status(tender_id, TenderStatus.FAILED.value, str(exc))
+        await publish_status(tender_id, TenderStatus.FAILED.value, message)
+        # Поднимаем исключение, чтобы Celery зафиксировал задачу как failed
+        raise
