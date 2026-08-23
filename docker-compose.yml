@@ -48,7 +48,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        ollama pull ${LLM_MODEL:-qwen3:14b}
+        ollama pull ${LLM_MODEL:-qwen3:8b}
     restart: "no"
 
 
